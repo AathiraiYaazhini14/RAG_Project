@@ -1,0 +1,12 @@
+Ingestion
+---------
+->Chunking:fixed size chunking; semantic chunking(LangChain, LlamaIndex); document aware chunking(used for pdfs); Hierarchical chunking(structured documents, its used)
+
+Embedding models
+----------------
+->Numerical vector that represents the meaning of the text
+->Whn user asks a question, the system also converts the query into embedding and searches for the relevant match. Its called semantic search
+->Text-embedding-3-large from openAI
+->voyage-3 from voyage AI 
+->open-source models like bge-large and E5-mistral available on Hugging Face
+

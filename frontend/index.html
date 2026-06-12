@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Intelligence Platform</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <nav>
+        <h1>Document Intelligence Platform</h1>
+        <p>Upload documents and ask questions using AI</p>
+    </nav>
+
+    <main>
+        <!-- Upload Section -->
+        <section class="upload-section">
+            <h2>Upload Document</h2>
+            <div class="upload-box" id="uploadBox">
+                <input type="file" id="fileInput" accept=".pdf,.txt,.docx" hidden>
+                <p>Click to upload PDF, TXT or DOCX</p>
+                <button onclick="document.getElementById('fileInput').click()">Choose File</button>
+                <p id="fileName">No file chosen</p>
+            </div>
+            <button class="primary-btn" onclick="uploadFile()">Upload & Process</button>
+            <div id="uploadStatus"></div>
+        </section>
+
+        <!-- Ask Section -->
+<section class="ask-section">
+    <h2>Ask a Question</h2>
+    <div class="toggle-group">
+        <label class="toggle-label">
+            <input type="radio" name="searchScope" value="current" checked>
+            Search current document only
+        </label>
+        <label class="toggle-label">
+            <input type="radio" name="searchScope" value="all">
+            Search all documents
+        </label>
+    </div>
+    <div class="input-group">
+        <input type="text" id="questionInput" placeholder="What does the document say about...?">
+        <button class="primary-btn" onclick="askQuestion()">Ask</button>
+    </div>
+    <div id="answerBox"></div>
+</section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

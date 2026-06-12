@@ -1,0 +1,3 @@
+My name is Aathi. I am learning to build a RAG system.
+I live in Tamil Nadu. I love coding and building AI projects.
+My favourite language is Python. I want to become an AI engineer.
