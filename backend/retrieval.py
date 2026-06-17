@@ -2,6 +2,7 @@ from config import GEMINI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX_NAME, TOP_K,
 from pinecone import Pinecone
 from google import genai
 from groq import Groq
+from rank_bm25 import BM25Okapi
 
 # Initialize Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -22,6 +23,79 @@ def embed_question(question):
     )
     
     return response.embeddings[0].values
+
+def fetch_all_chunks(doc_id=None):
+    filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
+    results = index.query(
+        vector=[0.0] * 2048,
+        top_k=10000,
+        include_metadata=True,
+        filter=filter
+    )
+    chunks = []
+    for match in results.matches:
+        chunks.append({
+            "id": match.id,
+            "text": match.metadata["text"],
+            "filename": match.metadata["filename"],
+            "chunk_index": match.metadata["chunk_index"]
+        })
+    return chunks
+
+def bm25_retrieve(question, all_chunks, top_k=20):
+    tokenized_corpus = [chunk["text"].lower().split() for chunk in all_chunks]
+    bm25 = BM25Okapi(tokenized_corpus)
+    tokenized_query = question.lower().split()
+    scores = bm25.get_scores(tokenized_query)
+    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+    return [(all_chunks[i], scores[i]) for i in top_indices]
+
+def hybrid_retrieve(question, top_k=5, doc_id=None):
+    all_chunks = fetch_all_chunks(doc_id)
+    if not all_chunks:
+        return []
+
+    # Vector search — top 20 candidates
+    question_vector = embed_question(question)
+    filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
+    vector_results = index.query(
+        vector=question_vector,
+        top_k=20,
+        include_metadata=True,
+        filter=filter
+    )
+    vector_chunks = [match.id for match in vector_results.matches]
+
+    # BM25 search — top 20 candidates
+    bm25_results = bm25_retrieve(question, all_chunks, top_k=20)
+    bm25_chunks = [chunk["id"] for chunk, score in bm25_results]
+
+    # RRF merge
+    rrf_scores = {}
+    k = 60  # RRF constant
+
+    for rank, chunk_id in enumerate(vector_chunks):
+        rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0) + 1 / (k + rank + 1)
+
+    for rank, chunk_id in enumerate(bm25_chunks):
+        rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0) + 1 / (k + rank + 1)
+
+    # Sort by RRF score
+    ranked_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]
+
+    # Build final result
+    chunk_map = {chunk["id"]: chunk for chunk in all_chunks}
+    final_chunks = []
+    for chunk_id in ranked_ids:
+        if chunk_id in chunk_map:
+            chunk = chunk_map[chunk_id]
+            final_chunks.append({
+                "text": chunk["text"],
+                "filename": chunk["filename"],
+                "score": round(rrf_scores[chunk_id], 4),
+                "chunk_index": chunk["chunk_index"]
+            })
+    return final_chunks
 
 def retrieve_chunks(question, top_k=TOP_K, doc_id=None):
     """Find the most relevant chunks for the question"""
@@ -82,7 +156,7 @@ def answer_question(question, top_k=TOP_K, doc_id=None):
     """Main function - retrieve chunks and generate answer"""
     
     print(f"Searching for: {question}")
-    chunks = retrieve_chunks(question, top_k, doc_id)
+    chunks = hybrid_retrieve(question, top_k, doc_id)
     
     if not chunks:
         return {
