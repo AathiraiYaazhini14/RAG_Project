@@ -4,6 +4,8 @@ from google import genai
 from groq import Groq
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
+import yaml
+import os
 
 # Initialize Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -15,6 +17,11 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+def load_prompt(version="v1"):
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", f"rag_prompt_{version}.yaml")
+    with open(prompt_path, "r") as f:
+        return yaml.safe_load(f)
 
 def embed_question(question):
     """Convert the question into a vector"""
@@ -136,30 +143,24 @@ def retrieve_chunks(question, top_k=TOP_K, doc_id=None):
     
     return chunks
 
-def generate_answer(question, chunks):
+def generate_answer(question, chunks, prompt_version="v1"):
     context = ""
     for i, chunk in enumerate(chunks):
         context += f"[Source {i+1}] (from {chunk['filename']}):\n{chunk['text']}\n\n"
-    
-    prompt = f"""You are a helpful assistant that answers questions based on the provided context.
 
-STRICT RULES:
-1. Every sentence in your answer MUST cite its source using [Source N] format.
-2. Only use information from the provided sources.
-3. If a piece of information comes from Source 2, write [Source 2] at the end of that sentence.
-4. If the answer is not in the context, say "I couldn't find the answer in the provided documents."
-5. Never make up information. Every claim needs a citation.
-
-Context:
-{context}
-
-Question: {question}
-
-Answer (you MUST use ONLY these exact formats: [Source 1], [Source 2], [Source 3], [Source 4], [Source 5]. Do NOT use decimals like [Source 1.5]. Cite at the end of each sentence):"""
+    prompt_config = load_prompt(prompt_version)
+    system_prompt = prompt_config["system"]
+    user_message = prompt_config["user_template"].format(
+        context=context,
+        question=question
+    )
 
     response = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
     )
     return response.choices[0].message.content
 
