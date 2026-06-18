@@ -137,59 +137,56 @@ def retrieve_chunks(question, top_k=TOP_K, doc_id=None):
     return chunks
 
 def generate_answer(question, chunks):
-    """Send question + context to Groq and get an answer"""
-    
     context = ""
     for i, chunk in enumerate(chunks):
-        context += f"Source {i+1} (from {chunk['filename']}):\n{chunk['text']}\n\n"
+        context += f"[Source {i+1}] (from {chunk['filename']}):\n{chunk['text']}\n\n"
     
     prompt = f"""You are a helpful assistant that answers questions based on the provided context.
-Use ONLY the context below to answer the question.
-Be flexible with how questions are phrased — if the context contains relevant information 
-even if worded differently, use it to answer.
-If the answer is truly not in the context, say "I couldn't find the answer in the provided documents."
+
+STRICT RULES:
+1. Every sentence in your answer MUST cite its source using [Source N] format.
+2. Only use information from the provided sources.
+3. If a piece of information comes from Source 2, write [Source 2] at the end of that sentence.
+4. If the answer is not in the context, say "I couldn't find the answer in the provided documents."
+5. Never make up information. Every claim needs a citation.
 
 Context:
 {context}
 
 Question: {question}
 
-Answer:"""
-    
+Answer (you MUST use ONLY these exact formats: [Source 1], [Source 2], [Source 3], [Source 4], [Source 5]. Do NOT use decimals like [Source 1.5]. Cite at the end of each sentence):"""
+
     response = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "user", "content": prompt}
-        ]
+        messages=[{"role": "user", "content": prompt}]
     )
-    
     return response.choices[0].message.content
 
 def answer_question(question, top_k=TOP_K, doc_id=None):
-    """Main function - retrieve chunks and generate answer"""
-    
     print(f"Searching for: {question}")
     chunks = hybrid_retrieve(question, top_k, doc_id)
-    
     if not chunks:
         return {
             "answer": "No relevant documents found. Please upload some documents first.",
             "sources": []
         }
-    
     print(f"Found {len(chunks)} relevant chunks, generating answer...")
     answer = generate_answer(question, chunks)
     
-    return {
-        "answer": answer,
-        "sources": [
-            {
+    cited_sources = []
+    for i, chunk in enumerate(chunks):
+        if f"[Source {i+1}]" in answer:
+            cited_sources.append({
+                "source_number": i+1,
                 "filename": chunk["filename"],
                 "score": round(chunk.get("rerank_score", chunk["score"]), 3),
                 "excerpt": chunk["text"][:200] + "..."
-            }
-            for chunk in chunks
-        ]
+            })
+
+    return {
+        "answer": answer,
+        "sources": cited_sources
     }
 
 
