@@ -3,6 +3,7 @@ from pinecone import Pinecone
 from google import genai
 from groq import Groq
 from rank_bm25 import BM25Okapi
+from sentence_transformers import CrossEncoder
 
 # Initialize Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -12,6 +13,8 @@ index = pc.Index(PINECONE_INDEX_NAME)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 groq_client = Groq(api_key=GROQ_API_KEY)
+
+cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 def embed_question(question):
     """Convert the question into a vector"""
@@ -95,7 +98,17 @@ def hybrid_retrieve(question, top_k=5, doc_id=None):
                 "score": round(rrf_scores[chunk_id], 4),
                 "chunk_index": chunk["chunk_index"]
             })
-    return final_chunks
+    return rerank_chunks(question, final_chunks, top_k)
+
+def rerank_chunks(question, chunks, top_k=5):
+    pairs = [[question, chunk["text"]] for chunk in chunks]
+    scores = cross_encoder.predict(pairs)
+    ranked = sorted(zip(chunks, scores), key=lambda x: x[1], reverse=True)
+    reranked = []
+    for chunk, score in ranked[:top_k]:
+        chunk["rerank_score"] = round(float(score), 4)
+        reranked.append(chunk)
+    return reranked
 
 def retrieve_chunks(question, top_k=TOP_K, doc_id=None):
     """Find the most relevant chunks for the question"""
@@ -172,7 +185,7 @@ def answer_question(question, top_k=TOP_K, doc_id=None):
         "sources": [
             {
                 "filename": chunk["filename"],
-                "score": round(chunk["score"], 3),
+                "score": round(chunk.get("rerank_score", chunk["score"]), 3),
                 "excerpt": chunk["text"][:200] + "..."
             }
             for chunk in chunks
