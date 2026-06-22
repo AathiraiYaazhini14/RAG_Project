@@ -34,6 +34,26 @@ def embed_question(question):
     
     return response.embeddings[0].values
 
+def rewrite_query(question):
+    prompt = f"""You are an expert at reformulating search queries to improve document retrieval.
+Given a user's question, rewrite it into a more detailed and specific search query that will better match relevant document content.
+
+Rules:
+1. Keep the same intent as the original question
+2. Use more specific and descriptive language
+3. Expand abbreviations (ML → Machine Learning, AI → Artificial Intelligence)
+4. Return ONLY the rewritten query, nothing else
+
+Original question: {question}
+
+Rewritten query:"""
+
+    response = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip()
+
 def fetch_all_chunks(doc_id=None):
     filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
     results = index.query(
@@ -61,12 +81,15 @@ def bm25_retrieve(question, all_chunks, top_k=20):
     return [(all_chunks[i], scores[i]) for i in top_indices]
 
 def hybrid_retrieve(question, top_k=5, doc_id=None):
-    all_chunks = fetch_all_chunks(doc_id)
+    rewritten = rewrite_query(question)
+    print(f"Original query: {question}")
+    print(f"Rewritten query: {rewritten}")
+    all_chunks = fetch_all_chunks(doc_id)    
     if not all_chunks:
         return []
 
     # Vector search — top 20 candidates
-    question_vector = embed_question(question)
+    question_vector = embed_question(rewritten)
     filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
     vector_results = index.query(
         vector=question_vector,
@@ -77,7 +100,7 @@ def hybrid_retrieve(question, top_k=5, doc_id=None):
     vector_chunks = [match.id for match in vector_results.matches]
 
     # BM25 search — top 20 candidates
-    bm25_results = bm25_retrieve(question, all_chunks, top_k=20)
+    bm25_results = bm25_retrieve(rewritten, all_chunks, top_k=20)
     bm25_chunks = [chunk["id"] for chunk, score in bm25_results]
 
     # RRF merge
