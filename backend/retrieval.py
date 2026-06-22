@@ -54,6 +54,21 @@ Rewritten query:"""
     )
     return response.choices[0].message.content.strip()
 
+def generate_hypothetical_answer(question):
+    prompt = f"""Generate a hypothetical answer to the following question as if it were found in a document.
+The answer doesn't need to be factually correct but should use appropriate terminology and style.
+Return ONLY the hypothetical answer, nothing else.
+
+Question: {question}
+
+Hypothetical answer:"""
+
+    response = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip()
+
 def fetch_all_chunks(doc_id=None):
     filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
     results = index.query(
@@ -89,7 +104,9 @@ def hybrid_retrieve(question, top_k=5, doc_id=None):
         return []
 
     # Vector search — top 20 candidates
-    question_vector = embed_question(rewritten)
+    hypothetical_answer = generate_hypothetical_answer(rewritten)
+    print(f"Hypothetical answer: {hypothetical_answer[:100]}...")
+    question_vector = embed_question(hypothetical_answer)
     filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
     vector_results = index.query(
         vector=question_vector,
