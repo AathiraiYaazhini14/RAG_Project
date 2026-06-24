@@ -5,6 +5,10 @@ from pydantic import BaseModel
 from typing import Optional
 from ingestion import ingest_document
 from retrieval import answer_question, list_documents, delete_document
+from collections import defaultdict
+
+# In-memory session storage
+chat_sessions = defaultdict(list)
 
 app = FastAPI(
     title="RAG API",
@@ -25,6 +29,7 @@ class QuestionRequest(BaseModel):
     question: str
     top_k: int = 5
     doc_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 class DeleteRequest(BaseModel):
     doc_id: str
@@ -50,7 +55,18 @@ async def upload_document(file: UploadFile = File(...)):
 def ask(req: QuestionRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
-    result = answer_question(req.question, req.top_k, req.doc_id)
+    
+    session_id = req.session_id or "default"
+    chat_history = chat_sessions[session_id]
+    
+    result = answer_question(req.question, req.top_k, req.doc_id, chat_history)
+    
+    # Store in session history
+    chat_sessions[session_id].append({
+        "question": req.question,
+        "answer": result["answer"]
+    })
+    
     return JSONResponse(content=result)
 
 @app.get("/documents")

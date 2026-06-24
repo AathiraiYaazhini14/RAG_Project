@@ -250,28 +250,35 @@ def retrieve_chunks(question, top_k=TOP_K, doc_id=None):
     
     return chunks
 
-def generate_answer(question, chunks, prompt_version="v1"):
+def generate_answer(question, chunks, chat_history=[], prompt_version="v1"):
     context = ""
     for i, chunk in enumerate(chunks):
         context += f"[Source {i+1}] (from {chunk['filename']}):\n{chunk['text']}\n\n"
 
     prompt_config = load_prompt(prompt_version)
     system_prompt = prompt_config["system"]
+    
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add chat history
+    for entry in chat_history:
+        messages.append({"role": "user", "content": entry["question"]})
+        messages.append({"role": "assistant", "content": entry["answer"]})
+    
+    # Add current question with context
     user_message = prompt_config["user_template"].format(
         context=context,
         question=question
     )
+    messages.append({"role": "user", "content": user_message})
 
     response = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
+        messages=messages
     )
     return response.choices[0].message.content
 
-def answer_question(question, top_k=TOP_K, doc_id=None):
+def answer_question(question, top_k=TOP_K, doc_id=None, chat_history=[]):
     print(f"Searching for: {question}")
     chunks = hybrid_retrieve(question, top_k, doc_id)
     if not chunks:
@@ -280,7 +287,7 @@ def answer_question(question, top_k=TOP_K, doc_id=None):
             "sources": []
         }
     print(f"Found {len(chunks)} relevant chunks, generating answer...")
-    answer = generate_answer(question, chunks)
+    answer = generate_answer(question, chunks, chat_history)
     
     cited_sources = []
     for i, chunk in enumerate(chunks):
