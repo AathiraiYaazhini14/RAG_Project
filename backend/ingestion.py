@@ -1,5 +1,6 @@
 import uuid
 import io
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from config import GEMINI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX_NAME
 from pinecone import Pinecone
 from google import genai
@@ -37,35 +38,42 @@ def extract_text(file_bytes, filename, content_type):
     
 
 def chunk_text(text, filename):
-    """Split text into semantic chunks based on meaning shifts"""
-    
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
-        google_api_key=GEMINI_API_KEY
+    # Step 1: Create large parent chunks
+    parent_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=100
     )
-    
-    splitter = SemanticChunker(
-        embeddings=embeddings,
-        breakpoint_threshold_type="percentile"
+    parent_chunks = parent_splitter.split_text(text)
+
+    # Step 2: Split each parent into smaller child chunks
+    child_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=200,
+        chunk_overlap=20
     )
-    
-    chunks = splitter.split_text(text)
-    
+
     doc_id = str(uuid.uuid4())
-    
     result = []
-    for i, chunk in enumerate(chunks):
-        result.append({
-            "id": f"{doc_id}_chunk_{i}",
-            "text": chunk,
-            "metadata": {
-                "doc_id": doc_id,
-                "filename": filename,
-                "chunk_index": i
-            }
-        })
-    
-    return result, doc_id
+    parent_store = {}
+
+    for i, parent_text in enumerate(parent_chunks):
+        parent_id = f"{doc_id}_parent_{i}"
+        parent_store[parent_id] = parent_text
+
+        child_chunks = child_splitter.split_text(parent_text)
+        for j, child_text in enumerate(child_chunks):
+            result.append({
+                "id": f"{doc_id}_chunk_{i}_{j}",
+                "text": child_text,
+                "metadata": {
+                    "doc_id": doc_id,
+                    "filename": filename,
+                    "chunk_index": j,
+                    "parent_id": parent_id,
+                    "parent_text": parent_text
+                }
+            })
+
+    return result, doc_id, parent_store
     
 
 def embed_chunks(chunks):
@@ -84,7 +92,8 @@ def embed_chunks(chunks):
             "values": vector,
             "metadata": {
                 **chunk["metadata"],
-                "text": chunk["text"]
+                "text": chunk["text"],
+                "parent_text": chunk["metadata"].get("parent_text", chunk["text"])
             }
         })
     
@@ -99,7 +108,7 @@ def ingest_document(file_bytes, filename, content_type):
     
     # Step 2: Chunk the text
     print("Chunking text...")
-    chunks, doc_id = chunk_text(text, filename)
+    chunks, doc_id, parent_store = chunk_text(text, filename)
     
     # Step 3: Embed the chunks
     print(f"Embedding {len(chunks)} chunks...")

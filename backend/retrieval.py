@@ -98,7 +98,7 @@ def fetch_all_chunks(doc_id=None):
     for match in results.matches:
         chunks.append({
             "id": match.id,
-            "text": match.metadata["text"],
+            "text": match.metadata.get("parent_text", match.metadata["text"]),
             "filename": match.metadata["filename"],
             "chunk_index": match.metadata["chunk_index"]
         })
