@@ -69,6 +69,23 @@ Hypothetical answer:"""
     )
     return response.choices[0].message.content.strip()
 
+def generate_multiple_queries(question, n=3):
+    prompt = f"""Generate {n} different versions of the following question to improve document retrieval.
+Each version should approach the same topic from a different angle or use different vocabulary.
+Return ONLY the {n} questions, one per line, no numbering or extra text.
+
+Original question: {question}
+
+Alternative questions:"""
+
+    response = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    queries = response.choices[0].message.content.strip().split("\n")
+    queries = [q.strip() for q in queries if q.strip()]
+    return queries[:n]
+
 def fetch_all_chunks(doc_id=None):
     filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
     results = index.query(
@@ -99,9 +116,59 @@ def hybrid_retrieve(question, top_k=5, doc_id=None):
     rewritten = rewrite_query(question)
     print(f"Original query: {question}")
     print(f"Rewritten query: {rewritten}")
-    all_chunks = fetch_all_chunks(doc_id)    
+
+    all_chunks = fetch_all_chunks(doc_id)
     if not all_chunks:
         return []
+
+    # Generate multiple queries
+    multiple_queries = generate_multiple_queries(rewritten, n=3)
+    all_queries = [rewritten] + multiple_queries
+    print(f"All queries: {all_queries}")
+
+    # HyDE for vector search
+    hypothetical_answer = generate_hypothetical_answer(rewritten)
+    print(f"Hypothetical answer: {hypothetical_answer[:100]}...")
+    question_vector = embed_question(hypothetical_answer)
+
+    # RRF scores across all queries
+    rrf_scores = {}
+    k = 60
+
+    # Vector search with HyDE
+    filter = {"doc_id": {"$eq": doc_id}} if doc_id else None
+    vector_results = index.query(
+        vector=question_vector,
+        top_k=20,
+        include_metadata=True,
+        filter=filter
+    )
+    for rank, match in enumerate(vector_results.matches):
+        rrf_scores[match.id] = rrf_scores.get(match.id, 0) + 1 / (k + rank + 1)
+
+    # BM25 search for each query
+    for query in all_queries:
+        bm25_results = bm25_retrieve(query, all_chunks, top_k=20)
+        for rank, (chunk, score) in enumerate(bm25_results):
+            rrf_scores[chunk["id"]] = rrf_scores.get(chunk["id"], 0) + 1 / (k + rank + 1)
+
+    # Sort by RRF score
+    ranked_ids = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]
+
+    # Build final result
+    chunk_map = {chunk["id"]: chunk for chunk in all_chunks}
+    final_chunks = []
+    for chunk_id in ranked_ids:
+        if chunk_id in chunk_map:
+            chunk = chunk_map[chunk_id]
+            final_chunks.append({
+                "text": chunk["text"],
+                "filename": chunk["filename"],
+                "score": round(rrf_scores[chunk_id], 4),
+                "chunk_index": chunk["chunk_index"]
+            })
+
+    return rerank_chunks(question, final_chunks, top_k)
 
     # Vector search — top 20 candidates
     hypothetical_answer = generate_hypothetical_answer(rewritten)
